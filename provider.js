@@ -57,6 +57,7 @@ class Provider {
             try {
                 const response = await fetch(url, {
                     timeout: this.timeout,
+                    noCloudflareBypass: true,
                     headers: {
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
                         "Accept": "*/*",
@@ -85,8 +86,15 @@ class Provider {
         }
         throw new Error("Miruro request failed. " + failures.join("; "));
     }
+    contentType(response) {
+        if (response.contentType) return response.contentType;
+        const headers = response.headers || {};
+        if (typeof headers.get === "function") return headers.get("content-type") || "";
+        const key = Object.keys(headers).find(key => key.toLowerCase() === "content-type");
+        return key ? String(headers[key]) : "";
+    }
     async problem(response) {
-        const type = response.headers?.get?.("content-type") || "";
+        const type = this.contentType(response);
         try {
             if (/json/i.test(type)) { const body = await response.json(); return body.detail || body.title || body.error || ""; }
             const text = await response.text();
@@ -95,10 +103,13 @@ class Provider {
     }
     async body(response) {
         // Every Miruro catalogue endpoint may answer with an application/octet-stream
-        // payload: the JSON is XOR'd with the catalogue key, then gzip-compressed.
-        const type = response.headers?.get?.("content-type") || "";
+        // payload: JSON is gzip-compressed, then XOR'd with the catalogue key.
+        const type = this.contentType(response);
         if (/octet-stream/i.test(type)) return JSON.parse(this.utf8(this.gunzip(this.xor(await this.bytes(response), this.key()))));
-        return response.json();
+        if (/html/i.test(type)) throw new Error("Miruro returned HTML instead of catalogue data (HTTP " + response.status + ").");
+        const value = await response.json();
+        if (value == null) throw new Error("Miruro returned invalid catalogue JSON (HTTP " + response.status + ", type " + (type || "unknown") + ").");
+        return value;
     }
     async json(response) {
         const body = await this.body(response);
@@ -119,7 +130,8 @@ class Provider {
         let cursor;
         for (let page = 0; page < this.maxPages; page++) {
             const body = await this.json(await this.request("v1/anime", { q: query, limit: this.pageSize, cursor, ...(opts.year ? { season_year: opts.year } : {}) }));
-            const items = Array.isArray(body.data) ? body.data : Array.isArray(body.data?.data) ? body.data.data : Array.isArray(body.data?.media) ? body.data.media : [];
+            const items = Array.isArray(body.data) ? body.data : Array.isArray(body.data?.data) ? body.data.data : Array.isArray(body.data?.media) ? body.data.media : null;
+            if (!items) throw new Error("Unexpected Miruro search response shape.");
             if (!items.length) break;
             for (const item of items) {
                 const id = item.id ?? item.anilistId ?? item.anilist_id;
@@ -252,10 +264,9 @@ class Provider {
     key() { return this.utf8Bytes(this.catalogueKey); }
     async bytes(response) {
         if (typeof response.arrayBuffer === "function") return new Uint8Array(await response.arrayBuffer());
-        const text = await response.text();
-        const out = new Uint8Array(text.length);
-        for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 0xff;
-        return out;
+        // Seanime exposes the original Go byte slice as body; text is not a binary transport.
+        if (response.body != null && typeof response.body.length === "number") return new Uint8Array(response.body);
+        throw new Error("Miruro binary response requires raw bytes from this runtime.");
     }
     xor(data, key) {
         const out = new Uint8Array(data.length);

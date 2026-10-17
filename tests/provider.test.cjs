@@ -128,3 +128,52 @@ test('manifest references this repository and a loadable Provider payload', () =
     assert.equal(provider().getSettings().supportsDub, true);
     assert.ok(provider().getSettings().episodeServers.includes('Auto'));
 });
+
+function seanimeOctet(value, headerOnly = false) {
+    const body = Array.from(xor(zlib.gzipSync(Buffer.from(JSON.stringify(value)))));
+    return { ok: true, status: 200, ...(headerOnly ? {} : { contentType: 'application/octet-stream' }),
+        headers: { 'Content-Type': 'application/octet-stream' }, body,
+        json: () => null, text: () => { throw Error('binary text must not be used'); } };
+}
+
+test('Seanime raw-byte responses support search, episodes and playback', async () => {
+    const p = provider(async (url, options) => {
+        assert.equal(options.noCloudflareBypass, true);
+        if (/\/play$/.test(url)) return seanimeOctet(playItem);
+        if (url.includes('/episodes?')) return seanimeOctet({ data: [{ episode_number: 1 }] });
+        assert.match(url, /season_year=2021/);
+        return seanimeOctet({ data: [{ id: 'douki', title: 'Ganbare, Douki-chan', external_ids: { anilist: ['137877'] } }], has_more: false });
+    });
+    const results = await p.search({ query: 'Ganbare, Douki-chan', year: 2021, media: { id: 137877 } });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].metadata.anilistId, 137877);
+    const episodes = await p.findEpisodes(results[0].id);
+    assert.equal(episodes.length, 1);
+    assert.equal((await p.findEpisodeServer(episodes[0], 'Auto')).videoSources.length, 1);
+});
+
+test('header maps decode binary without contentType and match names case-insensitively', async () => {
+    const p = provider(async () => seanimeOctet({ data: [{ id: '9', title: 'Encoded' }] }, true));
+    assert.equal((await p.search({ query: 'Encoded' })).length, 1);
+    assert.equal(p.contentType({ headers: { 'cOnTeNt-TyPe': 'application/json' } }), 'application/json');
+});
+
+test('invalid catalogue bodies fail explicitly while an empty list remains valid', async () => {
+    const p = provider();
+    await assert.rejects(p.body({ status: 200, contentType: 'text/html' }), /returned HTML/);
+    await assert.rejects(p.body({ status: 200, contentType: 'application/json', json: () => null }), /invalid catalogue JSON/);
+    await assert.rejects(p.bytes({ text: () => 'unsafe' }), /requires raw bytes/);
+    await assert.rejects(provider(async () => jsonResponse({ unexpected: [] })).search({ query: 'Example' }), /search response shape/);
+    assert.equal((await provider(async () => jsonResponse({ data: [] })).search({ query: 'Example' })).length, 0);
+});
+
+test('Seanime HTTP 403 stops without trying another mirror', async () => {
+    let calls = 0;
+    const p = provider(async () => {
+        calls++;
+        return { ok: false, status: 403, contentType: 'application/json', headers: {},
+            json: () => ({ detail: 'Blocked' }) };
+    });
+    await assert.rejects(p.search({ query: 'Example' }), /HTTP 403: Blocked/);
+    assert.equal(calls, 1);
+});

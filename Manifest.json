@@ -2,7 +2,7 @@
   "id": "miruro-v2",
   "name": "Miruro V2",
   "description": "Miruro anime provider with separate sub/dub selection and labelled streaming servers.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "DefnoJae",
   "type": "onlinestream-provider",
   "language": "javascript",
