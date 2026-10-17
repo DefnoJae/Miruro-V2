@@ -1,0 +1,7 @@
+{
+  "name": "miruro-v2-provider",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "test": "node --test tests/provider.test.cjs", "test:live": "node tests/live.cjs" },
+  "engines": { "node": ">=18" }
+}
