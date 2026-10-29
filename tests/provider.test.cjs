@@ -27,7 +27,7 @@ const playItem = {
         ] }
     ]
 };
-const episode = (p, mode = 'sub', number = 1) => ({ id: p.encode({ id: 177937, mode, number }), number, url: 'https://www.miruro.tv/watch/177937' });
+const episode = (p, mode = 'sub', number = 1) => ({ id: p.encode({ id: 177937, mode, number }), number, url: 'https://www.miruro.cx/watch/177937' });
 
 test('search paginates by cursor, unwraps data, retains metadata and isolates sub/dub IDs', async () => {
     const calls = [];
@@ -138,7 +138,7 @@ function seanimeOctet(value, headerOnly = false) {
 
 test('Seanime raw-byte responses support search, episodes and playback', async () => {
     const p = provider(async (url, options) => {
-        assert.equal(options.noCloudflareBypass, true);
+        assert.ok(!options.noCloudflareBypass);
         if (/\/play$/.test(url)) return seanimeOctet(playItem);
         if (url.includes('/episodes?')) return seanimeOctet({ data: [{ episode_number: 1 }] });
         assert.match(url, /season_year=2021/);
@@ -167,13 +167,32 @@ test('invalid catalogue bodies fail explicitly while an empty list remains valid
     assert.equal((await provider(async () => jsonResponse({ data: [] })).search({ query: 'Example' })).length, 0);
 });
 
-test('Seanime HTTP 403 stops without trying another mirror', async () => {
-    let calls = 0;
-    const p = provider(async () => {
-        calls++;
-        return { ok: false, status: 403, contentType: 'application/json', headers: {},
-            json: () => ({ detail: 'Blocked' }) };
+test('a host that answers 403 is skipped so another mirror can serve the search', async () => {
+    const hosts = [];
+    const p = provider(async url => {
+        const host = url.match(/^https:\/\/[^/]+/)[0];
+        hosts.push(host);
+        if (host === 'https://www.miruro.cx') return { ok: false, status: 403, contentType: 'application/json', headers: {}, json: () => ({ detail: 'Blocked' }) };
+        return octet({ data: [{ id: 'anime-1', title: 'Example', external_ids: { anilist: ['1'] } }], has_more: false });
     });
-    await assert.rejects(p.search({ query: 'Example' }), /HTTP 403: Blocked/);
-    assert.equal(calls, 1);
+    const results = await p.search({ query: 'Example' });
+    assert.equal(results.length, 1);
+    assert.deepEqual(hosts, ['https://www.miruro.cx', 'https://www.miruro.tv']);
+});
+
+test('when every mirror is blocked the 403 failures are reported together', async () => {
+    const p = provider(async () => ({ ok: false, status: 403, contentType: 'application/json', headers: {}, json: () => ({ detail: 'Blocked' }) }));
+    await assert.rejects(p.search({ query: 'Example' }), /Miruro request failed[\s\S]*miruro\.cx: HTTP 403 Blocked[\s\S]*miruro\.ru: HTTP 403 Blocked/);
+});
+
+test('a bypass transport failure falls back to the plain client for the same host', async () => {
+    let calls = 0;
+    const p = provider(async (url, options) => {
+        calls++;
+        if (options.noCloudflareBypass) return octet({ data: [{ id: 'anime-1', title: 'Example' }], has_more: false });
+        throw new Error('bypass transport failed');
+    });
+    const results = await p.search({ query: 'Example' });
+    assert.equal(results.length, 1);
+    assert.equal(calls, 2);
 });
