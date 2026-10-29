@@ -28,8 +28,8 @@ class Provider {
     encode(value) { return encodeURIComponent(JSON.stringify(value)); }
     decode(id) {
         let value;
-        try { value = JSON.parse(decodeURIComponent(id)); } catch (_) { throw new Error("Invalid Miruro ID; search again."); }
-        if (!value || value.id == null || !["sub", "dub"].includes(value.mode)) throw new Error("Invalid Miruro selection.");
+        try { value = JSON.parse(decodeURIComponent(id)); } catch (_) { throw this.error("Invalid Miruro ID; search again."); }
+        if (!value || value.id == null || !["sub", "dub"].includes(value.mode)) throw this.error("Invalid Miruro selection.");
         return value;
     }
 
@@ -52,47 +52,42 @@ class Provider {
         return parts.length ? "?" + parts.join("&") : "";
     }
 
+    errorText(error) {
+        if (error && typeof error.message === "string") return error.message;
+        if (typeof error === "string") return error;
+        try { return JSON.stringify(error) || String(error); } catch (_) { return String(error); }
+    }
+    error(message) {
+        // Goja exports enumerable properties; native Error.message otherwise becomes map[].
+        const error = new Error(String(message));
+        Object.defineProperty(error, "message", { value: String(message), enumerable: true, writable: true, configurable: true });
+        return error;
+    }
     async request(path, params, referer) {
         const failures = [];
         for (const host of this.hosts()) {
             const url = host + "/api/" + String(path).replace(/^\/+/, "") + this.query(params);
-            // Miruro sits behind Cloudflare bot management, so prefer Seanime's bypass
-            // client (Chrome TLS fingerprint) and only fall back to the plain client when
-            // the bypass request fails before any response arrives.
-            for (const bypass of [true, false]) {
-                const label = host + (bypass ? "" : " (no bypass)");
-                try {
-                    const response = await fetch(url, {
-                        timeout: this.timeout,
-                        ...(bypass ? {} : { noCloudflareBypass: true }),
-                        headers: {
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                            "Accept": "*/*",
-                            "Accept-Language": "en-US,en;q=0.9",
-                            "Referer": referer || host + "/",
-                            "Origin": host
-                        }
-                    });
-                    if (response.ok) {
-                        this._activeHost = host;
-                        return response;
-                    }
-                    const detail = await this.problem(response);
-                    // A 400 is the catalogue rejecting the request itself, so every mirror
-                    // answers the same; a 403 or 5xx can be host-specific, so try the rest.
-                    if (response.status === 400) {
-                        this._activeHost = null;
-                        throw new Error("Miruro rejected the request (HTTP 400" + (detail ? ": " + detail : "") + ").");
-                    }
-                    failures.push(label + ": HTTP " + response.status + (detail ? " " + detail : ""));
-                    break;
-                } catch (error) {
-                    if (/rejected the request/.test(error.message)) throw error;
-                    failures.push(label + ": " + error.message);
-                }
+            let response;
+            try {
+                response = await fetch(url, {
+                    timeout: this.timeout, noCloudflareBypass: true,
+                    headers: { "Accept": "*/*", "Accept-Language": "en-US,en;q=0.9", "Referer": referer || host + "/", "Origin": host }
+                });
+            } catch (error) {
+                failures.push(host + ": transport error: " + this.errorText(error));
+                continue;
             }
+            if (response.ok) { this._activeHost = host; return response; }
+            const detail = await this.problem(response);
+            const reason = host + ": HTTP " + response.status + (detail ? " " + detail : "");
+            if ([400, 403, 429].includes(response.status)) {
+                this._activeHost = null;
+                throw this.error("Miruro rejected the request (" + reason + ").");
+            }
+            failures.push(reason);
         }
-        throw new Error("Miruro request failed. " + failures.join("; "));
+        this._activeHost = null;
+        throw this.error("Miruro request failed. " + failures.join("; "));
     }
     contentType(response) {
         if (response.contentType) return response.contentType;
@@ -114,9 +109,9 @@ class Provider {
         // payload: JSON is gzip-compressed, then XOR'd with the catalogue key.
         const type = this.contentType(response);
         if (/octet-stream/i.test(type)) return JSON.parse(this.utf8(this.gunzip(this.xor(await this.bytes(response), this.key()))));
-        if (/html/i.test(type)) throw new Error("Miruro returned HTML instead of catalogue data (HTTP " + response.status + ").");
+        if (/html/i.test(type)) throw this.error("Miruro returned HTML instead of catalogue data (HTTP " + response.status + ").");
         const value = await response.json();
-        if (value == null) throw new Error("Miruro returned invalid catalogue JSON (HTTP " + response.status + ", type " + (type || "unknown") + ").");
+        if (value == null) throw this.error("Miruro returned invalid catalogue JSON (HTTP " + response.status + ", type " + (type || "unknown") + ").");
         return value;
     }
     async json(response) {
@@ -131,6 +126,10 @@ class Provider {
     }
 
     async search(opts) {
+        try { return await this._search(opts); }
+        catch (error) { throw this.error("Miruro search: " + this.errorText(error)); }
+    }
+    async _search(opts) {
         const mode = opts.dub ? "dub" : "sub";
         const query = (opts.query || opts.media?.englishTitle || opts.media?.romajiTitle || "").trim();
         if (!query) return [];
@@ -139,7 +138,7 @@ class Provider {
         for (let page = 0; page < this.maxPages; page++) {
             const body = await this.json(await this.request("v1/anime", { q: query, limit: this.pageSize, cursor, ...(opts.year ? { season_year: opts.year } : {}) }));
             const items = Array.isArray(body.data) ? body.data : Array.isArray(body.data?.data) ? body.data.data : Array.isArray(body.data?.media) ? body.data.media : null;
-            if (!items) throw new Error("Unexpected Miruro search response shape.");
+            if (!items) throw this.error("Unexpected Miruro search response shape.");
             if (!items.length) break;
             for (const item of items) {
                 const id = item.id ?? item.anilistId ?? item.anilist_id;
@@ -165,6 +164,10 @@ class Provider {
     }
 
     async findEpisodes(id) {
+        try { return await this._findEpisodes(id); }
+        catch (error) { throw this.error("Miruro findEpisodes: " + this.errorText(error)); }
+    }
+    async _findEpisodes(id) {
         const selection = this.decode(id);
         const body = await this.json(await this.request("v1/anime/" + encodeURIComponent(selection.id) + "/episodes", { limit: 10000 }));
         const items = Array.isArray(body.data) ? body.data : Array.isArray(body.data?.episodes) ? body.data.episodes : Array.isArray(body.data?.data) ? body.data.data : [];
@@ -179,14 +182,18 @@ class Provider {
     }
 
     async findEpisodeServer(episode, server) {
+        try { return await this._findEpisodeServer(episode, server); }
+        catch (error) { throw this.error("Miruro findEpisodeServer: " + this.errorText(error)); }
+    }
+    async _findEpisodeServer(episode, server) {
         const selection = this.decode(episode.id);
-        if (!Number.isInteger(selection.number)) throw new Error("Invalid Miruro episode ID.");
+        if (!Number.isInteger(selection.number)) throw this.error("Invalid Miruro episode ID.");
         const play = await this.playback(selection.id, selection.number);
         const tracks = Array.isArray(play.tracks) ? play.tracks : Array.isArray(play.data?.tracks) ? play.data.tracks : [];
         const wanted = selection.mode === "dub" ? ["dub"] : ["sub", "ssub"];
         const requested = !server || server === "default" ? "Auto" : server;
         const backend = requested === "Auto" ? null : this.providerId(requested);
-        if (requested !== "Auto" && !backend) throw new Error("Unknown Miruro server: " + requested);
+        if (requested !== "Auto" && !backend) throw this.error("Unknown Miruro server: " + requested);
         // Mirror the site's configured provider order so "Auto" agrees with Miruro.
         // Within a provider, prefer soft-subbed entries that carry external subtitles.
         const rank = new Map(this.providers.map((p, i) => [p.id, i]));
@@ -211,8 +218,8 @@ class Provider {
                 return { server: label + " · " + track.track, headers: this.headers(box), videoSources: sources.map(s => ({ ...s, subtitles: s.subtitles.length ? s.subtitles : subtitles })) };
             }
         }
-        if (backend) throw new Error("Miruro's " + requested + " server has no " + selection.mode + " stream for this episode.");
-        throw new Error("Miruro has no " + selection.mode + " stream for this episode. " + failures.slice(0, 4).join("; "));
+        if (backend) throw this.error("Miruro's " + requested + " server has no " + selection.mode + " stream for this episode.");
+        throw this.error("Miruro has no " + selection.mode + " stream for this episode. " + failures.slice(0, 4).join("; "));
     }
     providerId(label) {
         const match = this.providers.find(p => p.label.toLowerCase() === String(label).toLowerCase());
@@ -274,7 +281,7 @@ class Provider {
         if (typeof response.arrayBuffer === "function") return new Uint8Array(await response.arrayBuffer());
         // Seanime exposes the original Go byte slice as body; text is not a binary transport.
         if (response.body != null && typeof response.body.length === "number") return new Uint8Array(response.body);
-        throw new Error("Miruro binary response requires raw bytes from this runtime.");
+        throw this.error("Miruro binary response requires raw bytes from this runtime.");
     }
     xor(data, key) {
         const out = new Uint8Array(data.length);
@@ -344,7 +351,7 @@ class Provider {
                 if (code - count < first) return huffman.symbol[index + (code - first)];
                 index += count; first += count; first <<= 1; code <<= 1;
             }
-            throw new Error("Invalid Miruro compression data.");
+            throw this.error("Invalid Miruro compression data.");
         };
         const fixed = () => {
             const literal = new Array(288);
@@ -390,7 +397,7 @@ class Provider {
                         for (let i = 0; i < length; i++) out.push(out[out.length - distance]);
                     }
                 }
-            } else { throw new Error("Invalid Miruro compression block."); }
+            } else { throw this.error("Invalid Miruro compression block."); }
         }
         return new Uint8Array(out);
     }

@@ -10,7 +10,7 @@ const context = vm.createContext({ fetch: runtimeFetch, Uint8Array });
 const p = vm.runInContext(fs.readFileSync(path.join(__dirname, '../provider.js'), 'utf8') + '\nnew Provider()', context);
 const ANILIST_ID = 140960;
 function skip(error) {
-    if (/rejected the request|Cloudflare|HTTP 40[03]/.test(error.message)) {
+    if (/HTTP 403\b/.test(error.message)) {
         console.log('SKIP: Miruro rejected the request from this host: ' + error.message);
         process.exit(0);
     }
