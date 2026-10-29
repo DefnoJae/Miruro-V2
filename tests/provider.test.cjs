@@ -212,3 +212,16 @@ test('HTTP 400 and rate limiting are terminal', async () => {
         assert.equal(calls,1);
     }
 });
+
+test('uses the primary domain without www for requests, headers and watch URLs', async () => {
+    const p = provider(async (url, options) => {
+        assert.equal(new URL(url).origin, 'https://miruro.cx');
+        assert.equal(options.headers.Origin, 'https://miruro.cx');
+        assert.equal(options.headers.Referer, 'https://miruro.cx/');
+        assert.equal(options.noCloudflareBypass, true);
+        return jsonResponse({data:[{id:'test',title:'Example'}]});
+    });
+    const results = await p.search({query:'Example'});
+    assert.equal(results[0].url, 'https://miruro.cx/watch/test');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(__dirname,'../Manifest.json'))).website, 'https://miruro.cx/');
+});

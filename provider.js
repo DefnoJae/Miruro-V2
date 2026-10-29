@@ -1,10 +1,10 @@
 // Seanime online-stream provider for Miruro. No browser, Node, or third-party runtime dependencies.
 class Provider {
     constructor() {
-        // Miruro moved its primary domain to www.miruro.cx in late October 2026 and
+        // Miruro identifies miruro.cx (without www) as its primary domain and
         // announced the older mirrors are being phased out; keep them as fallbacks.
-        this.base = "https://www.miruro.cx";
-        this.mirrors = ["https://www.miruro.cx", "https://www.miruro.tv", "https://www.miruro.to", "https://www.miruro.bz", "https://www.miruro.ru"];
+        this.base = "https://miruro.cx";
+        this.mirrors = ["https://miruro.cx", "https://www.miruro.tv", "https://www.miruro.to", "https://www.miruro.bz", "https://www.miruro.ru"];
         this.catalogueKey = "miruro/catalog";
         this.timeout = 25;
         this.pageSize = 15;
