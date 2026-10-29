@@ -2,13 +2,13 @@
   "id": "miruro-v2",
   "name": "Miruro",
   "description": "Miruro anime provider with separate sub/dub selection and labelled streaming servers.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "author": "DefnoJae",
   "type": "onlinestream-provider",
   "language": "javascript",
   "lang": "en",
   "manifestURI": "https://raw.githubusercontent.com/DefnoJae/Miruro-V2/main/Manifest.json",
   "payloadURI": "https://raw.githubusercontent.com/DefnoJae/Miruro-V2/main/provider.js",
-  "website": "https://www.miruro.tv/",
+  "website": "https://www.miruro.cx/",
   "icon": "https://raw.githubusercontent.com/DefnoJae/Miruro-V2/75b781d3dc53ed8d83802703e73a9c511949253c/icon.png"
 }

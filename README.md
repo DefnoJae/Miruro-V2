@@ -1,6 +1,6 @@
 # Miruro V2 provider
 
-Seanime-compatible online streaming provider for https://www.miruro.tv/.
+Seanime-compatible online streaming provider for https://www.miruro.cx/.
 
 ## Install
 
@@ -29,7 +29,7 @@ Miruro's catalogue responses are not plain JSON: every endpoint may answer with 
 
 External subtitle URLs are returned exactly as Miruro serves them. Some of those hosts reject requests that do not originate from a browser/player context, so subtitle loading can depend on the client player. Subtitles embedded in an HLS master playlist are unaffected.
 
-The catalogue API is behind Cloudflare bot management. Requests are sent with browser-like headers from ordinary `fetch` (no signing, cookies or challenge solving), which succeeds from trusted hosts; from untrusted hosts a `403` is surfaced explicitly. The default host is `https://www.miruro.tv` with the `.to`, `.bz`, `.ru` and `.cx` mirrors as fallbacks.
+The catalogue API is behind Cloudflare bot management. Requests go through Seanime's Cloudflare-bypass client (a Chrome TLS fingerprint) and, when the bypass request cannot reach a host at all, fall back to plain `fetch`; both send browser-like headers. A host that still blocks the request answers `403`, which is reported explicitly; because a `403` can be host-specific, the remaining mirrors are tried before giving up. The default host is `https://www.miruro.cx` (Miruro's current primary domain) with `https://www.miruro.tv`, `https://www.miruro.to`, `https://www.miruro.bz` and `https://www.miruro.ru` as fallbacks. Miruro retired `www.miruro.tv` as its primary domain in late October 2026 and announced the older mirrors are being phased out.
 
 ## Verify
 
@@ -40,7 +40,7 @@ npm run test:live
 
 Unit tests use mocked responses (including a fixture that exercises the XOR+gzip decode through a real gzip stream) and need no network. The optional live check searches Spy×Family, lists both sub and dub episodes, resolves each mode, and fetches only the HLS master (no video segments). Host outages can make this check fail independently of provider changes.
 
-Verified on October 16, 2026: live sub and dub search (54 results, AniList ID matched), episode listing (12 episodes), resolution through **Auto** to **Icarus**, and HLS master retrieval (`200`, `#EXTM3U`) all succeeded. The sub track exposed 12 external subtitle tracks and dub exposed 1. Actual playback inside Seanime/CAnime was not available in this workspace.
+Verified on October 16, 2026 against the then-primary `www.miruro.tv`: live sub and dub search (54 results, AniList ID matched), episode listing (12 episodes), resolution through **Auto** to **Icarus**, and HLS master retrieval (`200`, `#EXTM3U`) all succeeded. The sub track exposed 12 external subtitle tracks and dub exposed 1. Miruro has since moved its primary domain to `www.miruro.cx`, so this version defaults there and keeps the older mirrors as fallbacks; the change could not be re-verified live from the development workspace, which Miruro answers with a Cloudflare challenge. Actual playback inside Seanime/CAnime was not available in this workspace.
 
 ## Repository layout and sources
 

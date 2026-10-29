@@ -1,8 +1,10 @@
 // Seanime online-stream provider for Miruro. No browser, Node, or third-party runtime dependencies.
 class Provider {
     constructor() {
-        this.base = "https://www.miruro.tv";
-        this.mirrors = ["https://www.miruro.tv", "https://www.miruro.to", "https://www.miruro.bz", "https://www.miruro.ru", "https://www.miruro.cx"];
+        // Miruro moved its primary domain to www.miruro.cx in late October 2026 and
+        // announced the older mirrors are being phased out; keep them as fallbacks.
+        this.base = "https://www.miruro.cx";
+        this.mirrors = ["https://www.miruro.cx", "https://www.miruro.tv", "https://www.miruro.to", "https://www.miruro.bz", "https://www.miruro.ru"];
         this.catalogueKey = "miruro/catalog";
         this.timeout = 25;
         this.pageSize = 15;
@@ -54,34 +56,40 @@ class Provider {
         const failures = [];
         for (const host of this.hosts()) {
             const url = host + "/api/" + String(path).replace(/^\/+/, "") + this.query(params);
-            try {
-                const response = await fetch(url, {
-                    timeout: this.timeout,
-                    noCloudflareBypass: true,
-                    headers: {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                        "Accept": "*/*",
-                        "Accept-Language": "en-US,en;q=0.9",
-                        "Referer": referer || host + "/",
-                        "Origin": host
+            // Miruro sits behind Cloudflare bot management, so prefer Seanime's bypass
+            // client (Chrome TLS fingerprint) and only fall back to the plain client when
+            // the bypass request fails before any response arrives.
+            for (const bypass of [true, false]) {
+                const label = host + (bypass ? "" : " (no bypass)");
+                try {
+                    const response = await fetch(url, {
+                        timeout: this.timeout,
+                        ...(bypass ? {} : { noCloudflareBypass: true }),
+                        headers: {
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                            "Accept": "*/*",
+                            "Accept-Language": "en-US,en;q=0.9",
+                            "Referer": referer || host + "/",
+                            "Origin": host
+                        }
+                    });
+                    if (response.ok) {
+                        this._activeHost = host;
+                        return response;
                     }
-                });
-                if (!response.ok) {
                     const detail = await this.problem(response);
-                    // A 400 is Miruro's catalogue validating the request (usually an
-                    // unsupported parameter); a 403 is usually a Cloudflare block.
-                    if (response.status === 400 || response.status === 403) {
+                    // A 400 is the catalogue rejecting the request itself, so every mirror
+                    // answers the same; a 403 or 5xx can be host-specific, so try the rest.
+                    if (response.status === 400) {
                         this._activeHost = null;
-                        throw new Error("Miruro rejected the request (HTTP " + response.status + (detail ? ": " + detail : "") + ").");
+                        throw new Error("Miruro rejected the request (HTTP 400" + (detail ? ": " + detail : "") + ").");
                     }
-                    failures.push(host + ": HTTP " + response.status + (detail ? " " + detail : ""));
-                    continue;
+                    failures.push(label + ": HTTP " + response.status + (detail ? " " + detail : ""));
+                    break;
+                } catch (error) {
+                    if (/rejected the request/.test(error.message)) throw error;
+                    failures.push(label + ": " + error.message);
                 }
-                this._activeHost = host;
-                return response;
-            } catch (error) {
-                if (/rejected the request/.test(error.message)) throw error;
-                failures.push(host + ": " + error.message);
             }
         }
         throw new Error("Miruro request failed. " + failures.join("; "));
